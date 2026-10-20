@@ -333,3 +333,28 @@ async def test_progress_callback_creation_logic() -> None:
             assert progress_callback is not None
         else:
             assert progress_callback is None
+
+
+@pytest.mark.parametrize("message", ["processing step 2", "", None])
+async def test_client_progress_message_preserved(message: str | None) -> None:
+    """Preserve optional messages on client-to-upstream progress notifications."""
+    remote = AsyncMock()
+    remote.initialize.return_value = types.InitializeResult(
+        protocolVersion="2025-11-25",
+        capabilities=types.ServerCapabilities(),
+        serverInfo=types.Implementation(name="synthetic", version="1"),
+    )
+    app = await create_proxy_server(remote)
+    notification = types.ProgressNotification(
+        method="notifications/progress",
+        params=types.ProgressNotificationParams(
+            progressToken="sampling-progress",
+            progress=2,
+            total=4,
+            message=message,
+        ),
+    )
+    await app.notification_handlers[types.ProgressNotification](notification)
+    remote.send_progress_notification.assert_awaited_once_with(
+        "sampling-progress", 2, 4, message=message
+    )

@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
@@ -798,3 +799,35 @@ async def test_call_tool_progress_forwarding_without_token(
 
         # Our optimization in proxy_server.py ensures that when no progressToken
         # is present, no progress_callback is created, avoiding unnecessary overhead.
+
+
+async def test_client_progress_message_survives_proxy_hop(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Compare direct and proxied notification payloads over real in-memory sessions."""
+    received: list[types.ProgressNotificationParams] = []
+    delivered = anyio.Event()
+    expected = types.ProgressNotificationParams(
+        progressToken="sampling-progress",
+        progress=2,
+        total=4,
+        message="Step 2: 준비",
+    )
+
+    async def receive(notification: types.ProgressNotification) -> None:
+        received.append(notification.params)
+        delivered.set()
+
+    server.notification_handlers[types.ProgressNotification] = receive
+    async with session_generator(server) as session:
+        await session.initialize()
+        await session.send_progress_notification(
+            progress_token=expected.progressToken,
+            progress=expected.progress,
+            total=expected.total,
+            message=expected.message,
+        )
+        with anyio.fail_after(2):
+            await delivered.wait()
+    assert received == [expected]
